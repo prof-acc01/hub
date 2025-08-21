@@ -27,8 +27,8 @@ jobs:
         with:
           path: 'problem'
           ref: 'main'
-          repository: 'leol0ps/backup-tcc'
-          token: '${{ secrets.BASE_REPO}}'
+          repository: 'prof-acc01/prof-repo'
+          token: '${{ secrets.token}}'
           persist-credentials: true
       - name: Get changed files from last commit
         id: verifica_extensoes
@@ -134,8 +134,8 @@ jobs:
       - name: Commit individual para cada exercício
         run: |
           cd student/
-          git config --global user.name "leol0ps"
-          git config --global user.email "leotimao2@hotmail.com"
+          git config --global user.name "prof-acc01"
+          git config --global user.email "prassiti.r@gmail.com"
           git remote set-url origin https://x-access-token:${{ secrets.token }}@github.com/${{ github.event.inputs.repo }}
 
           while IFS= read -r EXER; do
