@@ -1,0 +1,85 @@
+name: action-test
+on:
+  workflow_dispatch:
+    inputs:
+      distinct_id:
+      repo:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: echo distinct ID ${{ github.event.inputs.distinct_id }}
+        run: echo ${{ github.event.inputs.distinct_id }}
+      - name: echo repo
+        run: echo ${{github.event.inputs.repo}} 
+      - name: Checkout
+        run: |
+          git clone https://${{ secrets.token }}@github.com/${{ github.event.inputs.repo }}.git
+          
+        
+      - name: hub
+        run: git clone https://github.com/leol0ps/hub
+      - name: Checkout2
+        uses: actions/checkout@v4
+        with:
+          path: 'problem'
+          ref: 'main'
+          repository: 'leol0ps/backup-tcc'
+          token: '${{ secrets.BASE_REPO}}'
+          persist-credentials: true
+      - name: Updocker
+        shell: bash
+        run: |
+            cd hub 
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+      - name: Install dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+      - name: install
+        working-directory: .
+        run: |
+          cd problem/
+          yarn init -y
+          yarn add --dev @playwright/test
+          cd ..
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+      - name: Copy files
+        run: | 
+          ls
+          cd student/
+          cp ans.c ../problem/ 
+          cd ..
+          cp hub/contest.spec.ts problem/
+          cd problem/
+          ls
+      - name: Run test
+        run: |
+          cd problem/
+          npx playwright test 
+      - name: Copying answer
+          ls
+          cp screenshot.png ../student
+          cp problem.png ../student
+          cp userproblem.png ../student
+          cp startcontest.png ../student
+          cp checkcontest.png ../student
+          cd ..
+          cd student/
+      - name: Sending ansers to student repo  
+          ls
+          git config --global user.name "leol0ps"
+          git config --global user.email "leotimao2@hotmail.com"
+          git remote set-url origin https://x-access-token:${{ secrets.token }}@github.com/${{ github.event.inputs.repo }}
+          git add screenshot.png 
+          git add problem.png
+          git add userproblem.png
+          git add checkcontest.png
+          git add startcontest.png
+          git commit -m "answer"
+          git push
+      
+

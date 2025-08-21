@@ -1,0 +1,32 @@
+version: '3.3'
+services:
+  # PostgreSQL Database for BOCA
+  boca-db:
+    image: postgres:14-alpine
+    environment:
+      - POSTGRES_PASSWORD=superpass
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # BOCA Web Interface
+  boca-web:
+    image: ghcr.io/joaofazolo/boca-docker/boca-web:latest
+    ports:
+      - "8000:80"
+    environment:
+      - BOCA_DB_SUPER_PASSWORD=superpass
+    depends_on:
+      - boca-db
+    restart: on-failure
+
+  # BOCA Judge Container (Jail)
+  boca-jail:
+    image: leol0ps/boca-jail-custom:latest
+    privileged: true
+    depends_on:
+      - boca-db
+    restart: on-failure

@@ -1,0 +1,183 @@
+name: action-test
+on:
+  workflow_dispatch:
+    inputs:
+      distinct_id:
+      repo:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: echo distinct ID ${{ github.event.inputs.distinct_id }}
+        run: echo ${{ github.event.inputs.distinct_id }}
+      - name: Checkout student repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.inputs.repo }}
+          path: student
+          token: ${{ secrets.token }}
+          fetch-depth: 0 
+          
+        
+      - name: hub
+        run: git clone https://github.com/leol0ps/hub
+      - name: Checkout2
+        uses: actions/checkout@v4
+        with:
+          path: 'problem'
+          ref: 'main'
+          repository: 'leol0ps/backup-tcc'
+          token: '${{ secrets.BASE_REPO}}'
+          persist-credentials: true
+      - name: Get changed files from last commit
+        id: verifica_extensoes
+        run: |
+          cd student/
+
+          # Detecta modificações
+          git fetch origin main
+          if git cat-file -e ${{ github.event.before }} 2>/dev/null; then
+            git diff --name-only ${{ github.event.before }} ${{ github.sha }} > changed_files.txt
+          else
+            echo "⚠️ Commit anterior não encontrado, pegando modificações do último commit"
+            git diff --name-only HEAD~1 HEAD > changed_files.txt
+          fi
+
+          echo "🔍 Arquivos modificados:"
+          cat changed_files.txt
+
+          # Verifica extensões permitidas no config do hub (problem/)
+          cd ../problem/
+          EXTENSOES=$(jq -r '.languages[].extension' config.json | paste -sd '|' -)
+          echo "Extensões permitidas: $EXTENSOES"
+          
+          cd ../student/
+
+          # Filtra apenas arquivos válidos em problemas/
+          grep -Ei "^problemas/.*/.*\.(${EXTENSOES})$" changed_files.txt > filtered.txt || true
+          cut -d'/' -f2 filtered.txt | sort -u > exercises.txt
+          echo "📁 Exercícios modificados:"
+          cat exercises.txt || echo "(nenhum)"
+
+          cp exercises.txt ../problem/
+          cp changed_files.txt ../problem/
+
+          # Se nenhum exercício foi detectado, interrompe o workflow
+          if [ ! -s filtered.txt ]; then
+            echo "⛔ Nenhum arquivo com extensão permitida foi alterado. Encerrando workflow."
+            exit 1
+          fi
+
+      - name: Updocker
+        shell: bash
+        run: |
+            cp hub/docker-compose.yml problem/ 
+            cd problem/
+            docker pull leol0ps/boca-jail:latest
+            docker compose up -d
+      - name: Install dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+      - name: install
+        working-directory: .
+        run: |
+          cd problem/
+          yarn init -y
+          yarn add --dev @playwright/test
+          cd ..
+      - name: Install Playwright Browsers
+        run: npx playwright install chromium
+      - name: Copy files
+        run: | 
+          ls
+          cd student/
+          cp -r problemas ../problem/ 
+          cd ..
+          cp hub/contest.spec.ts problem/
+          cd problem/
+          ls
+
+      
+          
+
+
+      - name: Run test with retry
+        shell: bash
+        run: |
+          cd problem/
+          ATTEMPT=1
+          MAX_ATTEMPTS=10
+          set +e
+          while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+            echo "🎯 Tentativa $ATTEMPT de $MAX_ATTEMPTS"
+            npx playwright test contest.spec.ts  2>&1 | tee log.txt
+      
+            if grep -q "opção(ões) encontrada(s)" log.txt; then
+              echo "✅ Teste bem-sucedido!"
+              break
+            else
+              echo "❌ Problema não encontrado. Tentando novamente..."
+              ((ATTEMPT++))
+              sleep 1
+            fi
+            
+            if [ $ATTEMPT -gt $MAX_ATTEMPTS ]; then
+              echo "❌ Erro após $MAX_ATTEMPTS tentativas. Falhando..."
+              exit 1
+            fi
+          done
+          set -e
+      - name: Log Jail Output
+        run: docker logs $(docker ps -q --filter "name=boca-jail")
+      - name: Commit individual para cada exercício
+        run: |
+          cd student/
+          git config --global user.name "leol0ps"
+          git config --global user.email "leotimao2@hotmail.com"
+          git remote set-url origin https://x-access-token:${{ secrets.token }}@github.com/${{ github.event.inputs.repo }}
+
+          while IFS= read -r EXER; do
+            BASE="../problem/problemas/$EXER"
+            DEST="problemas/$EXER"
+
+            RESPOSTA_FILE="$BASE/resposta.txt"
+            STDOUT_FILE="$BASE/stdout.txt"
+            STDERR_FILE="$BASE/stderr.txt"
+
+            if [[ -f "$RESPOSTA_FILE" ]]; then
+              mkdir -p "$DEST"
+              cp "$RESPOSTA_FILE" "$DEST/resposta.txt"
+
+              # Copiar stdout e stderr se existirem
+              if [[ -f "$STDOUT_FILE" ]]; then
+                cp "$STDOUT_FILE" "$DEST/stdout.txt"
+                git add "$DEST/stdout.txt"
+              fi
+
+              if [[ -f "$STDERR_FILE" ]]; then
+                cp "$STDERR_FILE" "$DEST/stderr.txt"
+                git add "$DEST/stderr.txt"
+              fi
+
+              RAW_RESULT=$(cat "$RESPOSTA_FILE")
+
+              if [[ "$RAW_RESULT" == "YES" ]]; then
+                MESSAGE="🎈 YES – Submissão aceita"
+              elif [[ "$RAW_RESULT" == "" ]]; then
+                MESSAGE="❓ Resultado não encontrado no log"
+              else
+                MESSAGE="❌ $RAW_RESULT"
+              fi
+
+              git add "$DEST/resposta.txt"
+              git commit --allow-empty -m "$MESSAGE"
+            else
+              echo "⚠️ Arquivo de resposta não encontrado para $EXER"
+            fi
+          done < ../problem/exercises.txt
+
+          git push
+
+
